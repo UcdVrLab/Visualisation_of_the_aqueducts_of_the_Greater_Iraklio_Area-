@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+
+        <title>Aqueducts of the Greater Iraklio Area</title>
+		
+        <script src="libs/babylon/babylon.js"></script>
+        <script> BABYLON.Tools.ScriptBaseUrl = "libs/babylon/"; </script>
+        <script src="libs/babylon/recast.js"></script>
+        <script src="libs/babylon/ammo.js"></script>
+        <script src="libs/babylon/havok/HavokPhysics_umd.js"></script>
+        <script src="libs/babylon/cannon.js"></script>
+        <script src="libs/babylon/Oimo.js"></script>
+        <script src="libs/babylon/earcut.min.js"></script>
+        <script src="libs/babylon/materialsLibrary/babylonjs.materials.min.js"></script>
+        <script src="libs/babylon/proceduralTexturesLibrary/babylonjs.proceduralTextures.min.js"></script>
+        <script src="libs/babylon/postProcessesLibrary/babylonjs.postProcess.min.js"></script>
+        <script src="libs/babylon/loaders/babylonjs.loaders.js"></script>
+        <script src="libs/babylon/serializers/babylonjs.serializers.min.js"></script>
+        <script src="libs/babylon/gui/babylon.gui.min.js"></script>
+        <!-- <script src="libs/babylon/gui/babylon.gui.js"></script> -->
+        <script src="libs/babylon/addons/babylonjs.addons.min.js"></script>
+        <script src="libs/babylon/inspector/babylon.inspector.bundle.js"></script>
+
+        <style>
+            html, body {
+                overflow: hidden;
+                width: 100%;
+                height: 100%;
+                margin: 0;
+                padding: 0;
+            }
+
+            #renderCanvas {
+                width: 100%;
+                height: 100%;
+                touch-action: none;
+            }
+
+            #fps {
+                position: absolute;
+                background-color: black;
+                border: 2px solid red;
+                text-align: center;
+                font-size: 16px;
+                color: white;
+                top: 15px;
+                right: 10px;
+                width: 60px;
+                height: 20px;
+            }
+        </style>
+    </head>
+<body>
+    <div id="fps">0</div>
+    <canvas id="renderCanvas"></canvas>
+    <script type="module" src="./babylonScene.js"></script>
+</body>
+</html>

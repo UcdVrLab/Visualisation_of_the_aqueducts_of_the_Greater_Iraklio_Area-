@@ -1,0 +1,24 @@
+# 3D models and highres textures (because LFS bandwidth is limited)
+*.obj
+*.mtl
+*.glb
+*.gltf
+*.exr
+*.ply
+*.splat
+
+!cube.glb
+
+# Declaration files for Babylon
+*.d.ts
+
+# Archives
+*.7z
+*.zip
+*.gz
+
+# Notes
+*.txt
+!commandes.txt
+!process.txt
+/libs
