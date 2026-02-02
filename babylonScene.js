@@ -6,7 +6,6 @@
 
 // HTML elements (divs) for the render canvas, and for the fps counter
 var canvas = document.getElementById("renderCanvas");
-let divFps = document.getElementById("fps");
 
 // Frame time recording
 let frameTimeData = [];
@@ -77,6 +76,9 @@ function createPin(meshName, uvx, uvy, meshOperations) {
     pin.onPointerOutObservable.add(() => canvas.style.cursor = mapDragging ? "grabbing" : "grab");
 
 	pin.onPointerClickObservable.add(() => {
+		document.getElementById("loadingScreen").style.display = "block";
+		document.getElementById("loadingScreenText").innerText = "0%";
+
 		// Hide the map screen, disable map input and cursor handling, disable performance mode button
         mapImagePlane.setEnabled(false);
         mapGuiPlane.setEnabled(false);
@@ -104,9 +106,15 @@ function createPin(meshName, uvx, uvy, meshOperations) {
 			let meshPath = "./meshes/" + meshName;
 			if (performanceMode) meshPath += "Light";
 			meshPath += ".glb";
-			
-			// Load the actual mesh asynchronously (returns a Promise)
-			BABYLON.ImportMeshAsync(meshPath, scene).then(function (result) {
+
+			// Use SceneLoader.ImportMeshAsync with progress callback
+			BABYLON.SceneLoader.ImportMeshAsync("", meshPath, "", scene, (evt) => {
+				// On progress
+				if (evt.lengthComputable) {
+					let loadedPercent = ((evt.loaded * 100) / evt.total).toFixed();
+					document.getElementById("loadingScreenText").innerText = loadedPercent + "%";
+				}
+			}).then(function (result) {
 				// After load succeeds, put the mesh reference in the correct slot of the array
 				if(result.meshes[0].name === "__root__" && result.meshes[0].getChildMeshes().length === 1) {
 					// Meshes from .glb files have an empty __root__ mesh as parent, with the actual mesh as a child
@@ -120,6 +128,7 @@ function createPin(meshName, uvx, uvy, meshOperations) {
 				if(typeof meshOperations !== "undefined") meshOperations(meshes[index]); // Apply given operations to mesh, if any
 				console.timeEnd("Loading " + meshName); // Stop timing (that also logs the time)
 				engine.hideLoadingUI(); // hide the load screen
+				document.getElementById("loadingScreen").style.display = "none";
 
 				optimizeMesh(meshes[index]);
 			});
@@ -442,8 +451,8 @@ var createScene = async function () {
 	// Allows access to the debug mode of BabylonJS, including an inspector.
 	// Convenient for debugging.
 	// scene.debugLayer.show();
-	
-    return scene;
+    
+	return scene;
 };
 
 // Creation of the Babylon Engine
