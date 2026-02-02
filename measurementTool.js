@@ -15,11 +15,28 @@ const MeasurementTool = (function () {
     var mtObserver; // Pointer observer for the measurement tool
     var mtButton; // Button to activate measurement tool
     var mtRefInput, mtMeasText; // Input field and output text for the reference length and measurement length, respectively
+    var sceneScale = null; // Scale factor for current mesh
 
     // Enables the measurement tool on the current mesh
     function enable() {
         // Hide the button
         hideButton();
+        
+        // Lazy octree creation - only when needed
+        const activeMesh = scene.meshes.find(m => m.isEnabled() && m.name !== 'camera');
+        if (activeMesh && !activeMesh._hasOctree) {
+            console.log("Creating octree for picking...");
+            if (activeMesh.getChildMeshes().length > 0) {
+                activeMesh.getChildMeshes().forEach(child => {
+                    child.subdivide(500); // Reduced from 1000
+                    child.createOrUpdateSubmeshesOctree(64);
+                });
+            } else {
+                activeMesh.subdivide(500);
+                activeMesh.createOrUpdateSubmeshesOctree(64);
+            }
+            activeMesh._hasOctree = true;
+        }
 
         // Show the measurement UI
         mtGUI.isVisible = true;
@@ -135,36 +152,48 @@ const MeasurementTool = (function () {
             mtMeasText.color = "red";
             return;
         }
-    
+
+        // If scale is set, use it directly
+        if (sceneScale !== null) {
+            let measurementVector = mtMeasPoint2.position.subtract(mtMeasPoint1.position);
+            let measurementMeterLength = measurementVector.length() * sceneScale;
+            mtMeasText.text = ConversionHelper.metersToString(measurementMeterLength);
+            mtMeasText.color = "green";
+            return;
+        }
+
         // If one of the reference points is missing
         if(!mtRefPoint1.isVisible || !mtRefPoint2.isVisible) {
             mtMeasText.text = "Reference line is not drawn";
             mtMeasText.color = "red";
             return;
         }
-    
+
         let measurementVector = mtMeasPoint2.position.subtract(mtMeasPoint1.position);
         let referenceVector = mtRefPoint2.position.subtract(mtRefPoint1.position);
-    
+
         // If the reference line is of length 0
         if(referenceVector.length() === 0) {
             mtMeasText.text = "Reference line can't have a length of 0";
             mtMeasText.color = "red";
             return;
         }
-    
+
         let referenceMeterLength = ConversionHelper.stringToMeters(mtRefInput.text);
-    
+
         // If the conversion failed (= returned NaN)
         if(isNaN(referenceMeterLength)) {
             mtMeasText.text = "Reference line length is invalid";
             mtMeasText.color = "red";
             return;
         }
-    
-        let measurementMeterLength = measurementVector.length() * referenceMeterLength / referenceVector.length()
+
+        let scaleValue = referenceMeterLength / referenceVector.length();
+        let measurementMeterLength = measurementVector.length() * scaleValue;
         mtMeasText.text = ConversionHelper.metersToString(measurementMeterLength);
         mtMeasText.color = "green";
+        // Log scale value to console for developer use
+        console.log(`Calculated scale: ${scaleValue.toPrecision(6)} (meters per mesh unit)`);
     }
 
     // Initializes all the necessary components for the measurement tool, in the given scene, attaching the UI to the given AdvancedTexture
@@ -246,7 +275,7 @@ const MeasurementTool = (function () {
 
         mtMeasText = advancedTexture.getControlByName("MTMeasText");
         mtRefInput = advancedTexture.getControlByName("MTRefInput");
-        
+
         // Updates length text when the reference length has been changed
         mtRefInput.onTextChangedObservable.add((_eventData, _eventState) => {
             updateDisplay();
@@ -259,12 +288,29 @@ const MeasurementTool = (function () {
     const showButton = () => {mtButton.isVisible = true};
     const hideButton = () => {mtButton.isVisible = false};
 
+    // Set scale for current mesh/scene
+    function setScale(scale) {
+        sceneScale = scale;
+        // Optionally hide reference input UI if scale is set
+        if (mtRefInput) mtRefInput.isVisible = false;
+        updateDisplay();
+    }
+
+    // Reset scale (e.g., when switching scenes)
+    function resetScale() {
+        sceneScale = null;
+        if (mtRefInput) mtRefInput.isVisible = true;
+        updateDisplay();
+    }
+
     return {
         showButton,
         hideButton,
         enable,
         disable,
-        init
+        init,
+        setScale,
+        resetScale
     };
 })();
 

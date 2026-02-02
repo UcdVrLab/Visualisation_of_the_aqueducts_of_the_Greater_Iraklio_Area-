@@ -1,0 +1,35 @@
+[
+  {
+    "name": "Karydaki",
+    "uvx": 0.263,
+    "uvy": 0.107,
+    "scale": 1.155
+  },
+  {
+    "name": "Morosini",
+    "uvx": 0.399,
+    "uvy": 0.951,
+    "scale": 1.02
+  },
+  {
+    "name": "Caronissi",
+    "uvx": 0.222,
+    "uvy": 0.596,
+    "scale": 1.1
+  },
+  {
+    "name": "Silamos",
+    "uvx": 0.268,
+    "uvy": 0.268
+  },
+  {
+    "name": "Spilia",
+    "uvx": 0.422,
+    "uvy": 0.485
+  },
+  {
+    "name": "Bembo",
+    "uvx": 0.335,
+    "uvy": 0.951
+  }
+]

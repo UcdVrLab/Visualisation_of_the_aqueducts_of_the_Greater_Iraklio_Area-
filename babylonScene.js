@@ -8,6 +8,11 @@
 var canvas = document.getElementById("renderCanvas");
 let divFps = document.getElementById("fps");
 
+// Frame time recording
+let frameTimeData = [];
+let lastFrameDataLog = performance.now();
+const frameDataLogInterval = 10000; // Log and clear data every 10 seconds
+
 // Global variables for the base app
 var meshes = []; // List of currently loaded meshes
 var activeMeshIndex; // Index (in meshes array) of most recently rendered mesh
@@ -22,6 +27,28 @@ var camera2D, camera3D; // Babylon Cameras for the map screen (2D) and mesh scre
 var performanceMode = true; // Indicates if lighter versions of the meshes should be used (for lower end computers)
 
 import MeasurementTool from "./measurementTool.js";
+
+// Optimization function for large meshes
+function optimizeMesh(mesh) {
+	const meshesToOptimize = mesh.getChildMeshes().length > 0 ? mesh.getChildMeshes() : [mesh];
+	
+	meshesToOptimize.forEach(childMesh => {
+		if (!childMesh.getTotalVertices || childMesh.getTotalVertices() === 0) return; // Skip if not a mesh with geometry
+
+		childMesh.alwaysSelectAsActiveMesh = false; // Allow frustum culling
+		childMesh.freezeWorldMatrix(); // Freeze world matrix as mesh doesn't move
+		childMesh.doNotSyncBoundingInfo = true; // Don't sync bounding info every frame
+		
+		if (childMesh.material) childMesh.material.freeze(); // Freeze materials to avoid recompilation
+	});
+	
+	// Apply more aggressive culling
+	mesh.cullingStrategy = BABYLON.AbstractMesh.CULLINGSTRATEGY_BOUNDINGSPHERE_ONLY;
+	
+	// Ensure the mesh updates its bounding info once
+	mesh.refreshBoundingInfo();
+	mesh.freezeWorldMatrix();
+}
 
 // This function takes a name and a file, and creates a button in the menu with "name" as text
 // that loads and displays the mesh pointed by "meshSource", which can be a filepath or URL.
@@ -94,21 +121,7 @@ function createPin(meshName, uvx, uvy, meshOperations) {
 				console.timeEnd("Loading " + meshName); // Stop timing (that also logs the time)
 				engine.hideLoadingUI(); // hide the load screen
 
-				// Mesh subdivision and octree creation to optimize picking
-				// Has to be done after the mesh operations !
-				if(meshes[index].getChildMeshes().length > 0) {
-					// Create a maximum of 1000 total submeshes uniformly split between the children
-					let nbSub = 1000 / meshes[index].getChildMeshes().length;
-					//console.log(nbSub);
-					meshes[index].getChildMeshes().forEach(child => {
-						child.subdivide(Math.floor(nbSub));
-						child.createOrUpdateSubmeshesOctree(64);
-					});
-				} else {
-					// If no children, subdivide the mesh itself
-					meshes[index].subdivide(1000);
-					meshes[index].createOrUpdateSubmeshesOctree(64);
-				}
+				optimizeMesh(meshes[index]);
 			});
 		}
 
@@ -129,7 +142,9 @@ function createPin(meshName, uvx, uvy, meshOperations) {
 
 var createScene = async function () {
 	// Creation of the scene
-    var scene = new BABYLON.Scene(engine);
+	var scene = new BABYLON.Scene(engine);
+
+	scene.blockMaterialDirtyMechanism = true; // Prevent material updates unless explicitly needed
 
 	// For the map menu (2D view)
 	camera2D = new BABYLON.UniversalCamera("camera2D", new BABYLON.Vector3(0, 0, -3), scene);
@@ -141,17 +156,15 @@ var createScene = async function () {
 
 	// Arc Rotate Camera for looking at the meshes, which can be panned, zoomed and rotated
 	camera3D = new BABYLON.ArcRotateCamera("camera",
-											BABYLON.Tools.ToRadians(90), // starts at longitudinal angle 90
-											BABYLON.Tools.ToRadians(90), // starts at latitudinal angle 90
-											12, // starts at a distance of 12 units
-											BABYLON.Vector3.Zero(), // initial pivot is the origin
-											scene);
-		//camera.wheelDeltaPercentage = 0.02; // slows down zooming. Has issues. wheelPrecision is better.
-		camera3D.wheelPrecision = 50; // slows down the zooming (mouse wheel) by a factor of 50
-		//camera3D.attachControl(canvas, true);
+		BABYLON.Tools.ToRadians(90), // starts at longitudinal angle 90
+		BABYLON.Tools.ToRadians(90), // starts at latitudinal angle 90
+		12, // starts at a distance of 12 units
+		BABYLON.Vector3.Zero(), // initial pivot is the origin
+		scene);
+	camera3D.wheelPrecision = 50; // slows down the zooming (mouse wheel) by a factor of 50
 
 	// Basic light source, shining down
-    var light = new BABYLON.HemisphericLight("lightSource", new BABYLON.Vector3(0, 1, 0), scene);
+	var light = new BABYLON.HemisphericLight("lightSource", new BABYLON.Vector3(0, 1, 0), scene);
 
 	////////////////////////////
 	// Map Menu Configuration //
@@ -162,25 +175,34 @@ var createScene = async function () {
 
 	var camera_min_z = -5;
 	var camera_max_z = -1;
-    var zoom_speed = 0.005;
+	var zoom_speed = 0.005;
 
 	var mapTexture = new BABYLON.Texture("./gui/map.png", scene);
-    var mapMaterial = new BABYLON.StandardMaterial("mapmaterial", scene);
-    mapMaterial.diffuseTexture = mapTexture;
-    mapMaterial.disableLighting = true;
-    mapMaterial.emissiveColor = BABYLON.Color3.White();
+	var mapMaterial = new BABYLON.StandardMaterial("mapmaterial", scene);
+	mapMaterial.diffuseTexture = mapTexture;
+	mapMaterial.disableLighting = true;
+	mapMaterial.emissiveColor = BABYLON.Color3.White();
 
 	// Plane to hold the map texture
-    mapImagePlane = BABYLON.MeshBuilder.CreatePlane("mapplane", {size: 1}, scene);
-    mapImagePlane.material = mapMaterial;
-    mapImagePlane.position.z = 0.01; // Slightly behind the origin to avoid Z-fighting with the UI
+	mapImagePlane = BABYLON.MeshBuilder.CreatePlane("mapplane", {size: 1}, scene);
+	mapImagePlane.material = mapMaterial;
+	mapImagePlane.position.z = 0.01; // Slightly behind the origin to avoid Z-fighting with the UI
 
-	// Putting an Advanced Dynamic Texture (= UI) on a mesh removes its textures, if any, so we need two separate planes to hold the map texture and the UI. This one will hold the UI.
-    mapGuiPlane = BABYLON.MeshBuilder.CreatePlane("guiplane", {size: 1}, scene);
+	// Plane to hold the UI
+	mapGuiPlane = BABYLON.MeshBuilder.CreatePlane("guiplane", {size: 1}, scene);
 
-	// We need to wait for the texture to load so that we know its dimensions, in order to rescale the planes and setup the UI
-	mapTexture.onLoadObservable.add(() => {
-		// Get the dimensions of the image (only possible when load is over)
+	// Helper to load JSON file
+	async function loadSceneInfo() {
+		const response = await fetch("./scenes.json");
+		if (!response.ok) {
+			console.error("Failed to load scenes.json");
+			return [];
+		}
+		return await response.json();
+	}
+
+	// Wait for the texture to load so that we know its dimensions
+	mapTexture.onLoadObservable.add(async () => {
 		let w = mapTexture.getSize().width;
 		let h = mapTexture.getSize().height;
 		
@@ -198,15 +220,16 @@ var createScene = async function () {
 		// (Just using the image size as the dimensions, for example, would make the UI look bigger on smaller images)
 		mapAdvancedTexture = BABYLON.GUI.AdvancedDynamicTexture.CreateForMesh(mapGuiPlane, 1024*xsize, 1024*ysize);
 
-		/////// LIST OF MODELS AND THEIR LOCATION ON THE MAP
-
-		// The pins need to be created after the advanced texture is created, because they attach to it
-		createPin("Karydaki", 0.263, 0.107);
-		createPin("Morosini", 0.399, 0.951);
-		createPin("Caronissi", 0.222, 0.596);
-		createPin("Silamos", 0.268, 0.268);
-		createPin("Spilia", 0.422, 0.485);
-		createPin("Bembo", 0.335, 0.951);
+		// Load scene info from JSON and create pins
+		const sceneInfos = await loadSceneInfo();
+		sceneInfos.forEach(info => {
+			createPin(info.name, info.uvx, info.uvy, function(mesh) {
+				// Pass scale to measurement tool when mesh is loaded
+				if (typeof mesh !== "undefined" && typeof info.scale === "number") {
+					MeasurementTool.setScale(info.scale);
+				}
+			});
+		});
 	});
 
     //add pointer functionality
@@ -382,6 +405,7 @@ var createScene = async function () {
 		menuButton.isVisible = false;
 		MeasurementTool.hideButton();
 		MeasurementTool.disable();
+		MeasurementTool.resetScale();
 
 		// Disable current mesh (makes it invisible and improves performance)
 		meshes[activeMeshIndex].setEnabled(false);
@@ -411,15 +435,54 @@ var createScene = async function () {
 };
 
 // Creation of the Babylon Engine
-var engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
+var engine = new BABYLON.Engine(canvas, true, { 
+	preserveDrawingBuffer: true, 
+	stencil: true,
+	powerPreference: "high-performance",
+});
+engine.disablePerformanceMonitorInBackground = true;
+
 var scene;
 
 // Create scene asynchronously, then when it's ready, define render loop to render the frames of the scene
 createScene().then((loadedScene) => {
 	scene = loadedScene;
+	
+	let nextFpsUpdate = 0;
+	const fpsUpdateInterval = 250; // Update FPS display every Xms instead of every frame to avoid constant DOM updates
+
 	engine.runRenderLoop(function () {
+		const frameStart = performance.now();
 		loadedScene.render(); // Render the frame in the scene
-		divFps.innerHTML = engine.getFps().toFixed() + " FPS"; // Update the FPS counter
+		const frameEnd = performance.now();
+		const now = frameEnd;
+		
+		// Record frame time
+		if (now > nextFpsUpdate) {
+			frameTimeData.push({
+				frameTime: frameEnd - frameStart,
+				fps: engine.getFps()
+			});
+			//divFps.textContent = engine.getFps().toFixed() + " FPS"; // Update the FPS counter
+			nextFpsUpdate = now + fpsUpdateInterval;
+
+			// Log and clear frame data every 10 seconds
+			if (now - lastFrameDataLog > frameDataLogInterval) {
+				console.log(frameTimeData);
+				
+				// Calculate and log statistics
+				const avgFrameTime = frameTimeData.reduce((sum, d) => sum + d.frameTime, 0) / frameTimeData.length;
+				const avgFps = frameTimeData.reduce((sum, d) => sum + d.fps, 0) / frameTimeData.length;
+				const minFrameTime = Math.min(...frameTimeData.map(d => d.frameTime));
+				const maxFrameTime = Math.max(...frameTimeData.map(d => d.frameTime));
+				
+				console.log(`Stats - Avg Frame Time: ${avgFrameTime.toFixed(2)}ms, Avg FPS: ${avgFps.toFixed(1)}, Min: ${minFrameTime.toFixed(2)}ms, Max: ${maxFrameTime.toFixed(2)}ms`);
+				
+				// Clear the array
+				frameTimeData = [];
+				lastFrameDataLog = now;
+			}
+		}
 	});
 });
 
