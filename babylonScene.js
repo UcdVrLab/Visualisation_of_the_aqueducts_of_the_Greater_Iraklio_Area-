@@ -410,6 +410,18 @@ var createScene = async function () {
 		// Disable current mesh (makes it invisible and improves performance)
 		meshes[activeMeshIndex].setEnabled(false);
 
+		// If performance mode is enabled, dispose all other meshes to free memory
+		if (performanceMode) {
+			activeMeshIndex = null;
+			console.log("Disposing all meshes due to performance mode.");
+			for (let i = 0; i < meshes.length; ++i) {
+				if (meshes[i] != null) {
+					meshes[i].dispose();
+					meshes[i] = null;
+				}
+			}
+		}
+
 		// Reactivate 2D Camera
 		camera3D.detachControl(canvas);
 		camera2D.attachControl(canvas, true);
