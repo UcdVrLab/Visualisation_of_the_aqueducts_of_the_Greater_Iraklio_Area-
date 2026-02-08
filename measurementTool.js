@@ -8,13 +8,13 @@ import ConversionHelper from "./conversions.js";
 
 const MeasurementTool = (function () {
     var scene; // BabylonJS scene, required to process mouse inputs, for example
-    var mtGUI; // Measurement Tool GUI
     var mtMeasurementLine, mtReferenceLine; // UI Lines
     var mtRefPoint1, mtRefPoint2; // Reference line vertices
     var mtMeasPoint1, mtMeasPoint2; // Measurement line vertices
     var mtObserver; // Pointer observer for the measurement tool
     var mtButton; // Button to activate measurement tool
     var mtRefInput, mtMeasText; // Input field and output text for the reference length and measurement length, respectively
+    var mtPanel, mtCloseButton, mtRefLabel, mtRefHint, mtRefGroup; // HTML UI elements
     var sceneScale = null; // Scale factor for current mesh
 
     // Enables the measurement tool on the current mesh
@@ -39,14 +39,14 @@ const MeasurementTool = (function () {
         }
 
         // Show the measurement UI
-        mtGUI.isVisible = true;
+        if (mtPanel) mtPanel.classList.add("mt-visible");
 
         // Tracks when and where the currently held click on the mesh has started
         var startingPoint = null;
         var startingTime = null;
 
         // If measurements are already enabled, do nothing
-        if(mtObserver) return;
+        if (mtObserver) return;
 
         // Pointer events to place the measurement points and calculate the length
         mtObserver = scene.onPointerObservable.add((pointerInfo) => {
@@ -131,7 +131,7 @@ const MeasurementTool = (function () {
         }
     
         // clear text field
-        mtRefInput.text = "";
+        if (mtRefInput) mtRefInput.value = "";
     
         // hide measurement objects
         mtRefPoint1.isVisible = false;
@@ -140,7 +140,7 @@ const MeasurementTool = (function () {
         mtMeasPoint2.isVisible = false;
         mtReferenceLine.isVisible = false;
         mtMeasurementLine.isVisible = false;
-        mtGUI.isVisible = false;
+        if (mtPanel) mtPanel.classList.remove("mt-visible");
     }
 
     // LOCAL FUNCTION
@@ -148,8 +148,8 @@ const MeasurementTool = (function () {
     function updateDisplay() {
         // If one of the measurement points is missing
         if(!mtMeasPoint1.isVisible || !mtMeasPoint2.isVisible) {
-            mtMeasText.text = "Measurement line is not drawn";
-            mtMeasText.color = "red";
+            mtMeasText.textContent = "Measurement line is not drawn";
+            mtMeasText.dataset.state = "error";
             return;
         }
 
@@ -157,15 +157,15 @@ const MeasurementTool = (function () {
         if (sceneScale !== null) {
             let measurementVector = mtMeasPoint2.position.subtract(mtMeasPoint1.position);
             let measurementMeterLength = measurementVector.length() * sceneScale;
-            mtMeasText.text = ConversionHelper.metersToString(measurementMeterLength);
-            mtMeasText.color = "green";
+            mtMeasText.textContent = ConversionHelper.metersToString(measurementMeterLength);
+            mtMeasText.dataset.state = "ok";
             return;
         }
 
         // If one of the reference points is missing
         if(!mtRefPoint1.isVisible || !mtRefPoint2.isVisible) {
-            mtMeasText.text = "Reference line is not drawn";
-            mtMeasText.color = "red";
+            mtMeasText.textContent = "Reference line is not drawn";
+            mtMeasText.dataset.state = "error";
             return;
         }
 
@@ -174,24 +174,24 @@ const MeasurementTool = (function () {
 
         // If the reference line is of length 0
         if(referenceVector.length() === 0) {
-            mtMeasText.text = "Reference line can't have a length of 0";
-            mtMeasText.color = "red";
+            mtMeasText.textContent = "Reference line can't have a length of 0";
+            mtMeasText.dataset.state = "error";
             return;
         }
 
-        let referenceMeterLength = ConversionHelper.stringToMeters(mtRefInput.text);
+        let referenceMeterLength = ConversionHelper.stringToMeters(mtRefInput ? mtRefInput.value : "");
 
         // If the conversion failed (= returned NaN)
         if(isNaN(referenceMeterLength)) {
-            mtMeasText.text = "Reference line length is invalid";
-            mtMeasText.color = "red";
+            mtMeasText.textContent = "Reference line length is invalid";
+            mtMeasText.dataset.state = "error";
             return;
         }
 
         let scaleValue = referenceMeterLength / referenceVector.length();
         let measurementMeterLength = measurementVector.length() * scaleValue;
-        mtMeasText.text = ConversionHelper.metersToString(measurementMeterLength);
-        mtMeasText.color = "green";
+        mtMeasText.textContent = ConversionHelper.metersToString(measurementMeterLength);
+        mtMeasText.dataset.state = "ok";
         // Log scale value to console for developer use
         console.log(`Calculated scale: ${scaleValue.toPrecision(6)} (meters per mesh unit)`);
     }
@@ -238,46 +238,30 @@ const MeasurementTool = (function () {
         mtReferenceLine.color = "purple";
         advancedTexture.addControl(mtReferenceLine);
 
-        // Button with a measuring tape icon, to activate the measurement tool
-        mtButton = new BABYLON.GUI.Button("mtButton");
-        const mtButtonImage = new BABYLON.GUI.Image("mtButtonImage", "./gui/measure-tape-white.png");
-        mtButton.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_BOTTOM;
-        mtButton.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
-        mtButton.left = "10px";
-        mtButton.top = "-10px";
-        mtButton.width = "90px";
-        mtButton.height = "90px";
-        mtButton.cornerRadius = 10;
-        mtButton.background = "#222222aa";
-        mtButton.thickness = 2;
-        mtButton.isVisible = false; // only visible when a mesh is loaded, not by default
-        mtButton.addControl(mtButtonImage);
-        advancedTexture.addControl(mtButton);
+        const guiContainer = document.getElementById("guiContainer");
+        mtButton = document.getElementById("mtActivateButton");
+        mtPanel = document.getElementById("mtPanel");
+        mtCloseButton = document.getElementById("mtCloseButton");
+        mtRefLabel = document.getElementById("mtRefLabel");
+        mtRefHint = document.getElementById("mtRefHint");
+        mtRefGroup = document.getElementById("mtRefGroup");
+        mtMeasText = document.getElementById("mtResult");
+        mtRefInput = document.getElementById("mt-ref-input");
 
-        // On click, activate tool
-        mtButton.onPointerClickObservable.add(() => {
+        mtButton.addEventListener("click", () => {
             enable();
             updateDisplay();
         });
 
-        // Load GUI created with editor, get the measurement UI from it (by cloning and putting the clone in advancedTexture), then dispose of the loaded GUI
-        let loadedGUI = await BABYLON.GUI.AdvancedDynamicTexture.ParseFromFileAsync("./gui/measurementToolGUI.json");
-        mtGUI = loadedGUI.getControlByName("MeasurementUI").clone();
-        advancedTexture.addControl(mtGUI);
-        loadedGUI.dispose();
-
-        // Get the close button and make it disable the tool
-        let mtCloseButton = advancedTexture.getControlByName("MTCloseButton");
-        mtCloseButton.onPointerUpObservable.add(() => {
+        mtCloseButton.addEventListener("click", () => {
             disable();
             showButton();
         });
 
-        mtMeasText = advancedTexture.getControlByName("MTMeasText");
-        mtRefInput = advancedTexture.getControlByName("MTRefInput");
 
-        // Updates length text when the reference length has been changed
-        mtRefInput.onTextChangedObservable.add((_eventData, _eventState) => {
+
+        // Update the measurement when reference length input changes
+        mtRefInput.addEventListener("input", () => {
             updateDisplay();
         });
 
@@ -285,21 +269,27 @@ const MeasurementTool = (function () {
         disable();
     }
 
-    const showButton = () => {mtButton.isVisible = true};
-    const hideButton = () => {mtButton.isVisible = false};
+    const showButton = () => {
+        mtButton.classList.add("mt-visible");
+    };
+    const hideButton = () => {
+        mtButton.classList.remove("mt-visible");
+    };
 
     // Set scale for current mesh/scene
     function setScale(scale) {
         sceneScale = scale;
         // Optionally hide reference input UI if scale is set
-        if (mtRefInput) mtRefInput.isVisible = false;
+        if (mtRefGroup) mtRefGroup.style.display = "none";
+        if (mtRefHint) mtRefHint.style.display = "none";
         updateDisplay();
     }
 
     // Reset scale (e.g., when switching scenes)
     function resetScale() {
         sceneScale = null;
-        if (mtRefInput) mtRefInput.isVisible = true;
+        if (mtRefGroup) mtRefGroup.style.display = "";
+        if (mtRefHint) mtRefHint.style.display = "";
         updateDisplay();
     }
 

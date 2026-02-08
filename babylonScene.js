@@ -17,13 +17,10 @@ var meshes = []; // List of currently loaded meshes
 var activeMeshIndex; // Index (in meshes array) of most recently rendered mesh
 
 var menuButton; // Menu button, needs to be global so that all buttons can enable it on click.
-var performanceModeCheckbox; // Toggles performance mode, global so it can be disabled when loading a model
-var mapAdvancedTexture; // Advanced Texture (=GUI) on the map, containing the pins for each model
-var mapPointerObserver; // Handles DragDrop on map screen, global so that it can be disabled in 3D view
-var mapImagePlane, mapGuiPlane; // Planes for the map on the map screen, disabled on 3D view
-var mapDragging = false; // Boolean indicating if click is being held on the map screen (i.e. whether you are dragging)
-var camera2D, camera3D; // Babylon Cameras for the map screen (2D) and mesh screen (3D)
+var mapMenu, mapViewport, mapContent, mapPins, mapImage; // HTML map UI elements
+var camera3D; // Babylon Camera for mesh screen (3D)
 var performanceMode = true; // Indicates if lighter versions of the meshes should be used (for lower end computers)
+var currentLoadResult = null; // Tracks assets from the last model load so we can dispose them
 
 import MeasurementTool from "./measurementTool.js";
 
@@ -49,104 +46,12 @@ function optimizeMesh(mesh) {
 	mesh.freezeWorldMatrix();
 }
 
-// This function takes a name and a file, and creates a button in the menu with "name" as text
-// that loads and displays the mesh pointed by "meshSource", which can be a filepath or URL.
-function createPin(meshName, uvx, uvy, meshOperations) {
-	// Allocates a space in the array to store the mesh in, once it's loaded (after button click)
-	let index = meshes.length;
-	meshes.push(null);
-	
-	var pin = new BABYLON.GUI.Image(undefined, "gui/pin.png");
-    pin.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_CENTER;
-    pin.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_CENTER;
+function disposeLoadedAssets() {
+	if (!currentLoadResult) return;
 
-    pin.width = "80px";
-    pin.height = "80px";
-
-	pin.left = (uvx - 0.5) * 100 + "%";
-	pin.top = (0.5 - uvy) * 100 + "%";
-
-	// When pin is loaded, move it up by half its height so that the tip is at the specified point
-	pin.onImageLoadedObservable.add(() => {
-		pin.topInPixels -= pin.heightInPixels / 2;
-	});
-	
-	// Change cursor style based on state related to the pin
-    pin.onPointerEnterObservable.add(() => canvas.style.cursor = "pointer");
-    pin.onPointerOutObservable.add(() => canvas.style.cursor = mapDragging ? "grabbing" : "grab");
-
-	pin.onPointerClickObservable.add(() => {
-		document.getElementById("loadingScreen").style.display = "block";
-		document.getElementById("loadingScreenText").innerText = "0%";
-
-		// Hide the map screen, disable map input and cursor handling, disable performance mode button
-        mapImagePlane.setEnabled(false);
-        mapGuiPlane.setEnabled(false);
-		mapPointerObserver.remove();
-		scene.doNotHandleCursors = false;
-		canvas.style.cursor = "default";
-		performanceModeCheckbox.isVisible = false;
-
-		activeMeshIndex = index;
-
-		if(meshes[index] != null) {
-			// If mesh is already loaded, reenable it
-			meshes[index].setEnabled(true);
-		} else {
-			// If mesh isn't loaded, load it.
-			// Load time is measured by console.time() and timeEnd()
-			// The BabylonJS loading UI is shown during load (it can be configured)
-			
-			// Start timing and show load screen
-			console.time("Loading " + meshName);
-			console.log("Start loading of " + meshName);
-			engine.displayLoadingUI();
-
-			// Derive mesh path from the mesh name and performance mode
-			let meshPath = "./meshes/" + meshName;
-			if (performanceMode) meshPath += "Light";
-			meshPath += ".glb";
-
-			// Use SceneLoader.ImportMeshAsync with progress callback
-			BABYLON.SceneLoader.ImportMeshAsync("", meshPath, "", scene, (evt) => {
-				// On progress
-				if (evt.lengthComputable) {
-					let loadedPercent = ((evt.loaded * 100) / evt.total).toFixed();
-					document.getElementById("loadingScreenText").innerText = loadedPercent + "%";
-				}
-			}).then(function (result) {
-				// After load succeeds, put the mesh reference in the correct slot of the array
-				if(result.meshes[0].name === "__root__" && result.meshes[0].getChildMeshes().length === 1) {
-					// Meshes from .glb files have an empty __root__ mesh as parent, with the actual mesh as a child
-					// If __root__ has only one child, save it and not __root__
-					meshes[index] = result.meshes[0].getChildMeshes()[0];
-				} else {
-					// If it's not a .glb, or __root__ contains several meshes, just take the root mesh
-					meshes[index] = result.meshes[0];
-				}
-
-				if(typeof meshOperations !== "undefined") meshOperations(meshes[index]); // Apply given operations to mesh, if any
-				console.timeEnd("Loading " + meshName); // Stop timing (that also logs the time)
-				engine.hideLoadingUI(); // hide the load screen
-				document.getElementById("loadingScreen").style.display = "none";
-
-				optimizeMesh(meshes[index]);
-			});
-		}
-
-		// Show measurement tool button and menu button
-		menuButton.isVisible = true;
-		MeasurementTool.showButton();
-
-		// Reactivate 3D Camera
-		camera2D.detachControl(canvas);
-		camera3D.attachControl(canvas, true);
-		scene.activeCamera = camera3D;
-    });
-
-	// Add the pin to UI, return it so that its properties can be changed if needed
-	mapAdvancedTexture.addControl(pin);
-	return pin;
+	currentLoadResult.transformNodes?.forEach(node => node.dispose());
+	currentLoadResult.meshes?.forEach(mesh => mesh.dispose(false, true));
+	currentLoadResult = null;
 }
 
 var createScene = async function () {
@@ -154,14 +59,6 @@ var createScene = async function () {
 	var scene = new BABYLON.Scene(engine);
 
 	scene.blockMaterialDirtyMechanism = true; // Prevent material updates unless explicitly needed
-
-	// For the map menu (2D view)
-	camera2D = new BABYLON.UniversalCamera("camera2D", new BABYLON.Vector3(0, 0, -3), scene);
-	camera2D.attachControl(canvas, true);
-	// Disable mouse, keyboard and gamepad controls to prevent camera rotations and movement
-	camera2D.inputs.attached.mouse.detachControl();
-	camera2D.inputs.attached.keyboard.detachControl(); 
-	camera2D.inputs.attached.gamepad.detachControl();
 
 	// Arc Rotate Camera for looking at the meshes, which can be panned, zoomed and rotated
 	camera3D = new BABYLON.ArcRotateCamera("camera",
@@ -171,6 +68,8 @@ var createScene = async function () {
 		BABYLON.Vector3.Zero(), // initial pivot is the origin
 		scene);
 	camera3D.wheelPrecision = 50; // slows down the zooming (mouse wheel) by a factor of 50
+	camera3D.detachControl(canvas);
+	scene.activeCamera = camera3D;
 
 	// Basic light source, shining down
 	var light = new BABYLON.HemisphericLight("lightSource", new BABYLON.Vector3(0, 1, 0), scene);
@@ -179,26 +78,103 @@ var createScene = async function () {
 	// Map Menu Configuration //
 	////////////////////////////
 
-	scene.doNotHandleCursors = true;
-	canvas.style.cursor = "grab";
+	mapMenu = document.getElementById("mapMenu");
+	mapViewport = document.getElementById("mapViewport");
+	mapContent = document.getElementById("mapContent");
+	mapPins = document.getElementById("mapPins");
+	mapImage = document.getElementById("mapImage");
 
-	var camera_min_z = -5;
-	var camera_max_z = -1;
-	var zoom_speed = 0.005;
+	const setMapMenuVisible = (visible) => {
+		if (!mapMenu) return;
+		mapMenu.classList.toggle("is-hidden", !visible);
+	};
+	const setMapInteractable = (enabled) => {
+		if (!mapMenu) return;
+		mapMenu.classList.toggle("is-disabled", !enabled);
+	};
 
-	var mapTexture = new BABYLON.Texture("./gui/map.png", scene);
-	var mapMaterial = new BABYLON.StandardMaterial("mapmaterial", scene);
-	mapMaterial.diffuseTexture = mapTexture;
-	mapMaterial.disableLighting = true;
-	mapMaterial.emissiveColor = BABYLON.Color3.White();
+	let mapScale = 0.7;
+	let mapOffset = { x: 0, y: 0 };
+	let mapDragging = false;
+	let dragStart = { x: 0, y: 0 };
+	let mapStartOffset = { x: 0, y: 0 };
 
-	// Plane to hold the map texture
-	mapImagePlane = BABYLON.MeshBuilder.CreatePlane("mapplane", {size: 1}, scene);
-	mapImagePlane.material = mapMaterial;
-	mapImagePlane.position.z = 0.01; // Slightly behind the origin to avoid Z-fighting with the UI
+	const applyMapTransform = () => {
+		if (!mapContent) return;
+		mapContent.style.transform = `translate(${mapOffset.x}px, ${mapOffset.y}px) scale(${mapScale})`;
+	};
 
-	// Plane to hold the UI
-	mapGuiPlane = BABYLON.MeshBuilder.CreatePlane("guiplane", {size: 1}, scene);
+	const resetMapView = () => {
+		if (!mapViewport || !mapImage) return;
+		const viewportRect = mapViewport.getBoundingClientRect();
+		const imageWidth = mapImage.naturalWidth || mapImage.width;
+		const imageHeight = mapImage.naturalHeight || mapImage.height;
+		if (!imageWidth || !imageHeight) return;
+
+		if (mapContent) {
+			mapContent.style.width = `${imageWidth}px`;
+			mapContent.style.height = `${imageHeight}px`;
+		}
+		if (mapPins) {
+			mapPins.style.width = `${imageWidth}px`;
+			mapPins.style.height = `${imageHeight}px`;
+		}
+
+		const fitScale = Math.min(viewportRect.width / imageWidth, viewportRect.height / imageHeight);
+		mapScale = Math.max(0.4, fitScale * 0.9);
+		mapOffset = {
+			x: (viewportRect.width - imageWidth * mapScale) / 2,
+			y: (viewportRect.height - imageHeight * mapScale) / 2
+		};
+		applyMapTransform();
+	};
+
+	if (mapViewport) {
+		mapViewport.addEventListener("pointerdown", (event) => {
+			mapDragging = true;
+			dragStart = { x: event.clientX, y: event.clientY };
+			mapStartOffset = { x: mapOffset.x, y: mapOffset.y };
+			mapViewport.classList.add("is-dragging");
+			mapViewport.setPointerCapture(event.pointerId);
+		});
+
+		mapViewport.addEventListener("pointermove", (event) => {
+			if (!mapDragging) return;
+			const dx = event.clientX - dragStart.x;
+			const dy = event.clientY - dragStart.y;
+			mapOffset = { x: mapStartOffset.x + dx, y: mapStartOffset.y + dy };
+			applyMapTransform();
+		});
+
+		const stopDrag = (event) => {
+			if (!mapDragging) return;
+			mapDragging = false;
+			mapViewport.classList.remove("is-dragging");
+			if (event && mapViewport.hasPointerCapture(event.pointerId)) {
+				mapViewport.releasePointerCapture(event.pointerId);
+			}
+		};
+
+		mapViewport.addEventListener("pointerup", stopDrag);
+		mapViewport.addEventListener("pointerleave", stopDrag);
+
+		mapViewport.addEventListener("wheel", (event) => {
+			event.preventDefault();
+			const zoomFactor = event.deltaY > 0 ? 0.9 : 1.1;
+			mapScale = Math.min(3, Math.max(0.2, mapScale * zoomFactor));
+			applyMapTransform();
+		}, { passive: false });
+	}
+
+	if (mapImage) {
+		if (mapImage.complete) {
+			resetMapView();
+		} else {
+			mapImage.addEventListener("load", resetMapView, { once: true });
+		}
+	}
+
+	window.addEventListener("resize", resetMapView);
 
 	// Helper to load JSON file
 	async function loadSceneInfo() {
@@ -210,87 +186,81 @@ var createScene = async function () {
 		return await response.json();
 	}
 
-	// Wait for the texture to load so that we know its dimensions
-	mapTexture.onLoadObservable.add(async () => {
-		let w = mapTexture.getSize().width;
-		let h = mapTexture.getSize().height;
-		
-		// Calculate "normalized" size: the smallest dimension is 1 and the other is chosen to keep the ratio (e.g. a 600x400 image will have an xsize of 1.5 and ysize of 1)
-		// Those are used for the dimensions of the planes
-		let xsize = w > h ? w/h : 1;
-		let ysize = w > h ? 1 : h/w;
+	const createMapPin = (meshName, uvx, uvy, meshOperations) => {
+		let index = meshes.length;
+		meshes.push(null);
 
-		// Rescale the planes
-		mapImagePlane.scaling = new BABYLON.Vector3(xsize, ysize, 1);
-		mapGuiPlane.scaling = new BABYLON.Vector3(xsize, ysize, 1);
+		if (!mapPins) return;
+		const pin = document.createElement("button");
+		pin.type = "button";
+		pin.className = "map-pin";
+		pin.style.left = `${uvx * 100}%`;
+		pin.style.top = `${(1 - uvy) * 100}%`;
+		pin.setAttribute("aria-label", meshName);
+		pin.addEventListener("pointerdown", (event) => event.stopPropagation());
 
-		// Create an ADT to hold the UI of the map, linked to the mesh
-		// Its dimensions are proportional to the image to avoid stretching the UI, the 1024 factor is here to maintain consistent scaling no matter the image size (thanks to the normalization)
-		// (Just using the image size as the dimensions, for example, would make the UI look bigger on smaller images)
-		mapAdvancedTexture = BABYLON.GUI.AdvancedDynamicTexture.CreateForMesh(mapGuiPlane, 1024*xsize, 1024*ysize);
+		pin.addEventListener("click", () => {
+			document.getElementById("loadingScreen").style.display = "block";
+			document.getElementById("loadingScreenText").innerText = "0%";
 
-		// Load scene info from JSON and create pins
-		const sceneInfos = await loadSceneInfo();
-		sceneInfos.forEach(info => {
-			createPin(info.name, info.uvx, info.uvy, function(mesh) {
-				// Pass scale to measurement tool when mesh is loaded
-				if (typeof mesh !== "undefined" && typeof info.scale === "number") {
-					MeasurementTool.setScale(info.scale);
+			setMapMenuVisible(false);
+			setMapInteractable(false);
+
+			activeMeshIndex = index;
+
+			disposeLoadedAssets();
+			if (meshes[index] != null) {
+				meshes[index].dispose(false, true);
+				meshes[index] = null;
+			}
+
+			console.time("Loading " + meshName);
+			console.log("Start loading of " + meshName);
+			engine.displayLoadingUI();
+
+			let meshPath = "./meshes/" + meshName;
+			if (performanceMode) meshPath += "Light";
+			meshPath += ".glb";
+
+			BABYLON.SceneLoader.ImportMeshAsync("", meshPath, "", scene, (evt) => {
+				if (evt.lengthComputable) {
+					let loadedPercent = ((evt.loaded * 100) / evt.total).toFixed();
+					document.getElementById("loadingScreenText").innerText = loadedPercent + "%";
 				}
+			}).then(function (result) {
+				currentLoadResult = result;
+				if(result.meshes[0].name === "__root__" && result.meshes[0].getChildMeshes().length === 1) {
+					meshes[index] = result.meshes[0].getChildMeshes()[0];
+				} else {
+					meshes[index] = result.meshes[0];
+				}
+
+				if(typeof meshOperations !== "undefined") meshOperations(meshes[index]);
+				console.timeEnd("Loading " + meshName);
+				engine.hideLoadingUI();
+				document.getElementById("loadingScreen").style.display = "none";
+
+				optimizeMesh(meshes[index]);
 			});
+
+			if (menuButton) menuButton.classList.add("is-visible");
+			MeasurementTool.showButton();
+
+			camera3D.attachControl(canvas, true);
+			scene.activeCamera = camera3D;
+		});
+
+		mapPins.appendChild(pin);
+	};
+
+	const sceneInfos = await loadSceneInfo();
+	sceneInfos.forEach(info => {
+		createMapPin(info.name, info.uvx, info.uvy, function(mesh) {
+			if (typeof mesh !== "undefined" && typeof info.scale === "number") {
+				MeasurementTool.setScale(info.scale);
+			}
 		});
 	});
-
-    //add pointer functionality
-	mapPointerObserver = scene.onPointerObservable.add((e)=>onPointerMapDragDrop(e));
-    let mapCameraSpeed = 0.001;
-	var mapObserverPos, mapObserverLastPos;
-
-    function onPointerMapDragDrop(pointerInfo) {
-  
-        switch (pointerInfo.type) {
-            case BABYLON.PointerEventTypes.POINTERDOWN:
-                mapDragging = true;
-
-                let uv = pointerInfo.pickInfo.getTextureCoordinates();
-				console.log(uv);
-
-                // change cursor except if on a pin
-                if(engine.getRenderingCanvas().style.cursor != "pointer")
-                    engine.getRenderingCanvas().style.cursor = "grabbing";
-			break;
-			case BABYLON.PointerEventTypes.POINTERUP:
-                mapDragging = false;
-                
-                // change cursor except if on a pin
-                if(engine.getRenderingCanvas().style.cursor != "pointer")
-                    engine.getRenderingCanvas().style.cursor = "grab";
-            break;
-            case BABYLON.PointerEventTypes.POINTERMOVE:
-                if(mapDragging){
-                    mapObserverPos = new BABYLON.Vector2(scene.pointerX,scene.pointerY);
-                    let xdir = mapObserverLastPos.x-mapObserverPos.x;
-                    let ydir = mapObserverLastPos.y-mapObserverPos.y;
-                    mapCameraSpeed = 0.001*-camera2D.position.z
-                    camera2D._localDirection.copyFromFloats(mapCameraSpeed*xdir, mapCameraSpeed*-ydir, 0);
-                    camera2D.getViewMatrix().invertToRef(camera2D._cameraTransformMatrix);
-                    BABYLON.Vector3.TransformNormalToRef(camera2D._localDirection, camera2D._cameraTransformMatrix, camera2D._transformedDirection);
-                    camera2D.position.addInPlace(camera2D._transformedDirection);
-                }
-            break;
-            case BABYLON.PointerEventTypes.POINTERWHEEL:
-                camera2D._localDirection.copyFromFloats(0, 0, -pointerInfo.event.deltaY*zoom_speed);
-                camera2D.getViewMatrix().invertToRef(camera2D._cameraTransformMatrix);
-                BABYLON.Vector3.TransformNormalToRef(camera2D._localDirection, camera2D._cameraTransformMatrix, camera2D._transformedDirection);
-                camera2D.position.addInPlace(camera2D._transformedDirection);
-                if(camera2D.position.z>camera_max_z)
-                    camera2D.position.z=camera_max_z;
-                else if(camera2D.position.z<camera_min_z)
-                    camera2D.position.z=camera_min_z;
-            break;
-        }
-        mapObserverLastPos = new BABYLON.Vector2(scene.pointerX,scene.pointerY)
-    }
 
 	/////////////////////////
 	// WebXR Configuration //
@@ -357,91 +327,38 @@ var createScene = async function () {
 	// UI of the app //
 	///////////////////
 
-	// UI Base (all UI elements are children of this, except the ones tied to the map since those need to be attached to the mesh with the map texture)
+	// UI Base for measurement tool lines
 	var advancedTexture = BABYLON.GUI.AdvancedDynamicTexture.CreateFullscreenUI("UI");
-
-	// Checkbox to toggle performance mode
-	performanceModeCheckbox = BABYLON.GUI.Checkbox.AddCheckBoxWithHeader("Performance mode", (value) => {
-		performanceMode = value;
-		// Clears all currently cached meshes
-		for(let index = 0; index < meshes.length; ++index) {
-			if(meshes[index] != null) {
-				meshes[index].dispose();
-				meshes[index] = null;
-			}
-		}
-	});
-	performanceModeCheckbox.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
-	performanceModeCheckbox.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
-	performanceModeCheckbox.left = "20px";
-	performanceModeCheckbox.top = "20px";
-	performanceModeCheckbox.children[0].isChecked = true; // Start enabled
-	advancedTexture.addControl(performanceModeCheckbox);
 
 	// UI Elements
 
 	// Menu button configuration
-	menuButton = BABYLON.GUI.Button.CreateSimpleButton("Menu Button", "Back to Menu");
-	menuButton.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_BOTTOM;
-	menuButton.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_RIGHT;
-	menuButton.left = "-20px";
-	menuButton.top = "-20px";
-	menuButton.width = "150px";
-	menuButton.height = "50px";
-	menuButton.background = "red";
-	menuButton.color = "darkred";
-	menuButton.cornerRadius = 3;
-	menuButton.thickness = 3;
+	menuButton = document.getElementById("backToMenuButton");
 
 	// On Click behaviour for the menu button
-	menuButton.onPointerUpObservable.add(() => {
-		// Reenable the map
-		mapGuiPlane.setEnabled(true);
-		mapImagePlane.setEnabled(true);
-
-		// Reenable performance mode checkbox
-		performanceModeCheckbox.isVisible = true;
-
-		// Go back to manual handling of mouse cursor for map view
-		scene.doNotHandleCursors = true;
-		canvas.style.cursor = "grab";
-
-		// Reenable drag and drop
-		mapDragging = false;
-		mapPointerObserver = scene.onPointerObservable.add((e)=>onPointerMapDragDrop(e));
+	if (menuButton) menuButton.addEventListener("click", () => {
+		setMapInteractable(true);
+		setMapMenuVisible(true);
 
 		// Hide 3D view UI and disable measurements
-		menuButton.isVisible = false;
+		menuButton.classList.remove("is-visible");
 		MeasurementTool.hideButton();
 		MeasurementTool.disable();
 		MeasurementTool.resetScale();
 
-		// Disable current mesh (makes it invisible and improves performance)
-		meshes[activeMeshIndex].setEnabled(false);
-
-		// If performance mode is enabled, dispose all other meshes to free memory
-		if (performanceMode) {
-			activeMeshIndex = null;
-			console.log("Disposing all meshes due to performance mode.");
-			for (let i = 0; i < meshes.length; ++i) {
-				if (meshes[i] != null) {
-					meshes[i].dispose();
-					meshes[i] = null;
-				}
+		// Dispose all meshes and assets when returning to menu
+		activeMeshIndex = null;
+		disposeLoadedAssets();
+		for (let i = 0; i < meshes.length; ++i) {
+			if (meshes[i] != null) {
+				meshes[i].dispose(false, true);
+				meshes[i] = null;
 			}
 		}
 
-		// Reactivate 2D Camera
+		// Detach 3D camera controls on menu screen
 		camera3D.detachControl(canvas);
-		camera2D.attachControl(canvas, true);
-		camera2D.inputs.attached.mouse.detachControl();
-		camera2D.inputs.attached.keyboard.detachControl();
-		scene.activeCamera = camera2D;
 	});
-
-	// Add menu button to the UI and make it invisible
-	advancedTexture.addControl(menuButton);
-	menuButton.isVisible = false;
 
 	////////////////////////////////////////////////////////////////////////////////////
 
