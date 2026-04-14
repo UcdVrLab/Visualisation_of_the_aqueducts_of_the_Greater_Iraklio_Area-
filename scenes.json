@@ -2,34 +2,34 @@
   {
     "name": "Karydaki",
     "uvx": 0.263,
-    "uvy": 0.107,
+    "uvy": 0.102,
     "scale": 1.155
   },
   {
     "name": "Morosini",
-    "uvx": 0.399,
-    "uvy": 0.951,
+    "uvx": 0.03,
+    "uvy": 0.972,
     "scale": 1.02
   },
   {
     "name": "Caronissi",
     "uvx": 0.222,
-    "uvy": 0.596,
-    "scale": 1.1
+    "uvy": 0.57,
+    "scale": 0.95
   },
   {
     "name": "Silamos",
     "uvx": 0.268,
-    "uvy": 0.268
+    "uvy": 0.263
   },
   {
     "name": "Spilia",
     "uvx": 0.422,
-    "uvy": 0.485
+    "uvy": 0.46
   },
   {
     "name": "Bembo",
-    "uvx": 0.335,
-    "uvy": 0.951
+    "uvx": 0.03,
+    "uvy": 0.937
   }
 ]
